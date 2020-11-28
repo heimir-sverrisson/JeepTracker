@@ -3,6 +3,10 @@
 #include "Adafruit_LEDBackpack.h"
 
 #include <Adafruit_GPS.h>
+#include <SPI.h>
+#include <SD.h>
+
+const int chipSelect = 10;
 
 // what's the name of the hardware serial port?
 #define GPSSerial Serial1
@@ -29,24 +33,27 @@ enum SystemMode {
 };
 
 SystemMode current_mode;
+SystemMode previous_mode;
 int previous_button_value;
+
+File dataFile;
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(MODE_BUTTON, INPUT_PULLUP);
   current_mode = METERS;
+  previous_mode = FEET; // Force update in first iteration
   previous_button_value = HIGH;
   
   alpha0.begin(0x70);
   alpha1.begin(0x71);
 
-  // while (!Serial);  // uncomment to have the sketch wait until Serial is
-  // ready
+  // while (!Serial);  // uncomment to have the sketch wait until Serial is ready
 
   // connect at 115200 so we can read the GPS fast enough and echo without
   // dropping chars also spit it out
   Serial.begin(115200);
-  Serial.println("Adafruit GPS library basic test!");
+  Serial.println("JeepTracker");
 
   // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
   GPS.begin(9600);
@@ -71,10 +78,21 @@ void setup() {
   delay(1000);
 
   // Ask for firmware version
-  GPSSerial.println(PMTK_Q_RELEASE);
+  // GPSSerial.println(PMTK_Q_RELEASE);
+
+  Serial.print("Initializing SD card...");
+
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    while (1);
+  }
+  Serial.println("card initialized.");
+  dataFile = SD.open("datalog.txt", FILE_WRITE);
 }
 
-char buffer[9];
+char display_buffer[9];
 
 void loop() // run over and over again
 {
@@ -99,89 +117,68 @@ void loop() // run over and over again
 
   // approximately every 2 seconds or so, random intervals, print out the
   // current stats
-  static unsigned nextInterval = 2000;
+  static unsigned nextInterval = 5500;
   if (millis() - timer > nextInterval) {
+    char csv[100];
+    csv[0] = {'\0x0'};
     timer = millis(); // reset the timer
-    nextInterval = 2000;
+    nextInterval = 5500;
     // Time in seconds keeps increasing after we get the NMEA sentence.
     // This estimate will lag real time due to transmission and parsing delays,
     // but the lag should be small and should also be consistent.
-    float s = GPS.seconds + GPS.milliseconds / 1000. + GPS.secondsSinceTime();
-    int m = GPS.minute;
-    int h = GPS.hour;
-    int d = GPS.day;
-    // ISO Standard Date Format, with leading zeros https://xkcd.com/1179/
-    Serial.print("\nDate: ");
-    Serial.print(GPS.year + 2000, DEC);
-    Serial.print("-");
-    if (GPS.month < 10)
-      Serial.print("0");
-    Serial.print(GPS.month, DEC);
-    Serial.print("-");
-    if (d < 10)
-      Serial.print("0");
-    Serial.print(d, DEC);
-    Serial.print("   Time: ");
-    if (h < 10)
-      Serial.print("0");
-    Serial.print(h, DEC);
-    Serial.print(':');
-    if (m < 10)
-      Serial.print("0");
-    Serial.print(m, DEC);
-    Serial.print(':');
-    if (s < 10)
-      Serial.print("0");
-    Serial.println(s, 3);
-    Serial.print("Fix: ");
-    Serial.print((int)GPS.fix);
-    Serial.print(" quality: ");
-    Serial.println((int)GPS.fixquality);
-    Serial.print("Time [s] since last fix: ");
-    Serial.println(GPS.secondsSinceFix(), 3);
-    Serial.print("    since last GPS time: ");
-    Serial.println(GPS.secondsSinceTime(), 3);
-    Serial.print("    since last GPS date: ");
-    Serial.println(GPS.secondsSinceDate(), 3);
-    if (GPS.fix) {
-      Serial.print("Location: ");
-      Serial.print(GPS.latitude, 4);
-      Serial.print(GPS.lat);
-      Serial.print(", ");
-      Serial.print(GPS.longitude, 4);
-      Serial.println(GPS.lon);
-      Serial.print("Speed (knots): ");
-      Serial.println(GPS.speed);
-      Serial.print("Angle: ");
-      Serial.println(GPS.angle);
-      Serial.print("Altitude: ");
-      Serial.println(GPS.altitude);
-      Serial.print("Satellites: ");
-      Serial.println((int)GPS.satellites);
-    }
-    Serial.print("Input button: ");
-    Serial.println(previous_button_value);
+    float secs = GPS.seconds + GPS.milliseconds / 1000. + GPS.secondsSinceTime();
+    int minute = GPS.minute;
+    int hour = GPS.hour;
+    int day = GPS.day;
+    int year = GPS.year + 2000;
+    int month = GPS.month;
+    char datebuff[25];  // Holding 'yyyy-mm-ddThh:mm:ss.ddd'
+    sprintf(datebuff, "%4d-%02d-%02dT%02d:%02d:%06.3f,", year, month, day, hour, minute, secs);
+    strcat(csv, datebuff);
+    char fix_and_quality[5];
+    sprintf(fix_and_quality, "%1d,%1d,", GPS.fix, GPS.fixquality);
+    strcat(csv, fix_and_quality);
+    char lon_lat[35];
+    sprintf(lon_lat, "%.8f,%.8f,", GPS.longitudeDegrees, GPS.latitudeDegrees);
+    strcat(csv, lon_lat);
+    char alt_sats[25];
+    sprintf(alt_sats, "%.1f,%d", GPS.altitude, GPS.satellites);
+    strcat(csv, alt_sats);
+    char speed_angle[25];
+    sprintf(speed_angle, "%.1f,%.1f", GPS.speed, GPS.angle);
+    strcat(csv, speed_angle);
+    Serial.println(csv);
+    dataFile.println(csv);
+    dataFile.flush();
+    update_display();
   }
-  switch(current_mode){
-    case METERS:
-      show_altitude_meters(buffer);
-      break;
-    case FEET:
-      show_altitude_feet(buffer);
-      break;
-    case SATS:
-      show_number_of_satellites(buffer);
-      break;
-    case GRID:
-      show_grid(buffer);
-      break;
+  if(previous_mode != current_mode){
+    update_display();
+    previous_mode = current_mode;
   }
-  write_buffer(buffer);
   int button_value = digitalRead(MODE_BUTTON);
   if(button_value == HIGH && previous_button_value == LOW){
     current_mode = switch_mode(current_mode);
   }
   previous_button_value = button_value;
+}
+
+void update_display(){
+  switch(current_mode){
+    case METERS:
+      show_altitude_meters(display_buffer);
+      break;
+    case FEET:
+      show_altitude_feet(display_buffer);
+      break;
+    case SATS:
+      show_number_of_satellites(display_buffer);
+      break;
+    case GRID:
+      show_grid(display_buffer);
+      break;
+  }
+  write_buffer(display_buffer);
 }
 
 SystemMode switch_mode(SystemMode current){
@@ -249,7 +246,7 @@ void show_altitude_meters(char *buf){
 }
 
 void show_altitude_feet(char *buf){
-    int feet = (int)(GPS.altitude/.303 + 0.5);
+    int feet = (int)(GPS.altitude * 3.28084 + 0.5);
     sprintf(buf, "%7dF", feet);
 }
 
