@@ -25,7 +25,8 @@
  * TYPEDEF
  **************************************************************************************/
 
-typedef std::function<void(nmea::RmcData const)> OnGprmcUpdateFunc;
+typedef std::function<void(nmea::RmcData const)> OnRmcUpdateFunc;
+typedef std::function<void(nmea::GgaData const)> OnGgaUpdateFunc;
 
 /**************************************************************************************
  * CLASS DECLARATION
@@ -36,16 +37,18 @@ class ArduinoNmeaParser
 
 public:
 
-  ArduinoNmeaParser(OnGprmcUpdateFunc on_rmc_update);
+  ArduinoNmeaParser(OnRmcUpdateFunc on_rmc_update,
+                    OnGgaUpdateFunc on_gga_update);
 
 
   void encode(char const c);
 
 
   inline const nmea::RmcData rmc() const { return _rmc; }
+  inline const nmea::GgaData gga() const { return _gga; }
 
 
-  enum class Error { None, Checksum, RMC };
+  enum class Error { None, Checksum };
 
   inline void  clearerr()       { _error = Error::None; }
   inline Error error   () const { return _error; }
@@ -70,15 +73,17 @@ private:
   ParserState _parser_state;
   ParserBuffer _parser_buf;
   nmea::RmcData _rmc;
-  OnGprmcUpdateFunc _on_gprmc_update;
+  nmea::GgaData _gga;
+  OnRmcUpdateFunc _on_rmc_update;
+  OnGgaUpdateFunc _on_gga_update;
 
   bool isParseBufferFull();
   void addToParserBuffer(char const c);
   void flushParserBuffer();
   bool isCompleteNmeaMessageInParserBuffer();
   void terminateParserBuffer();
-  void parseGPRMC();
-
+  void parseGxRMC();
+  void parseGxGGA();
 };
 
 #endif /* ARDUINO_MTK3333_NMEA_PARSER_H_ */

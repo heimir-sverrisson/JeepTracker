@@ -120,7 +120,6 @@ void loop() // run over and over again
   static unsigned nextInterval = 5500;
   if (millis() - timer > nextInterval) {
     char csv[100];
-    csv[0] = {'\0x0'};
     timer = millis(); // reset the timer
     nextInterval = 5500;
     // Time in seconds keeps increasing after we get the NMEA sentence.
@@ -142,7 +141,7 @@ void loop() // run over and over again
     sprintf(lon_lat, "%.8f,%.8f,", GPS.longitudeDegrees, GPS.latitudeDegrees);
     strcat(csv, lon_lat);
     char alt_sats[25];
-    sprintf(alt_sats, "%.1f,%d", GPS.altitude, GPS.satellites);
+    sprintf(alt_sats, "%.1f,%d,", GPS.altitude, GPS.satellites);
     strcat(csv, alt_sats);
     char speed_angle[25];
     sprintf(speed_angle, "%.1f,%.1f", GPS.speed, GPS.angle);

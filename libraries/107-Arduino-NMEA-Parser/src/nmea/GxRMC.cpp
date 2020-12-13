@@ -9,12 +9,13 @@
  * INCLUDE
  **************************************************************************************/
 
-#include "GPRMC.h"
+#include "GxRMC.h"
 
 #include <math.h>
 #include <string.h>
 
-#include "util/gprmc.h"
+#include "util/rmc.h"
+#include "util/common.h"
 #include "util/checksum.h"
 
 /**************************************************************************************
@@ -34,32 +35,25 @@ constexpr float kts_to_m_per_s(float const v) { return (v / 1.9438444924574f); }
  * PUBLIC MEMBER FUNCTIONS
  **************************************************************************************/
 
-bool GPRMC::isGPRMC(char const * nmea)
-{
-  return (strncmp(nmea, "$GPRMC", 6) == 0);
-}
-bool GPRMC::parse(char const * gprmc, RmcData & data)
+void GxRMC::parse(char * gxrmc, RmcData & data)
 {
   ParserState state = ParserState::MessadeId;
 
-  for (char * token = strsep((char **)&gprmc, ",");
-       token != nullptr;
-       token = strsep((char **)&gprmc, ","))
-  {
-    /* All GPS receivers should at least implement the the fields: UTC Position Fix,
-     * Status, Latitude, Longitude, Speed over ground, Track Angle. All other fields
-     * are optional. Therefore we are checking in the following if statement if the
-     * current token is a checksum token. If that's the case we are directly jumping
-     * to ParserState::Checksum.
-     */
-    if (util::isChecksumToken(token))
-      state = ParserState::Checksum;
+  /* Replace the '*' sign denoting the start of the checksum
+   * with a ',' in order to be able to tokenize all elements
+   * including the one before the checksum.
+   */
+  *strchr(gxrmc, '*') = ',';
 
+  for (char * token = strsep(&gxrmc, ",");
+       token != nullptr;
+       token = strsep(&gxrmc, ","))
+  {
     ParserState next_state = state;
 
     switch(state)
     {
-    case ParserState::MessadeId:                  next_state = handle_MessadeId                (token);                          break;
+    case ParserState::MessadeId:                  next_state = handle_MessadeId                (token, data.source);             break;
     case ParserState::UTCPositionFix:             next_state = handle_UTCPositionFix           (token, data.time_utc);           break;
     case ParserState::Status:                     next_state = handle_Status                   (token, data.is_valid);           break;
     case ParserState::LatitudeVal:                next_state = handle_LatitudeVal              (token, data.latitude);           break;
@@ -72,114 +66,88 @@ bool GPRMC::parse(char const * gprmc, RmcData & data)
     case ParserState::MagneticVariation:          next_state = handle_MagneticVariation        (token, data.magnetic_variation); break;
     case ParserState::MagneticVariationEastWest:  next_state = handle_MagneticVariationEastWest(token, data.magnetic_variation); break;
     case ParserState::Checksum:                   next_state = handle_Checksum                 (token);                          break;
-    case ParserState::Done:                       return true;                                                                   break;
-    case ParserState::Error:                      return false;                                                                  break;
+    case ParserState::Done:                                                                                                      break;
     };
 
     state = next_state;
   }
-
-  return (state == ParserState::Done);
 }
 
 /**************************************************************************************
  * PRIVATE MEMBER FUNCTIONS
  **************************************************************************************/
 
-GPRMC::ParserState GPRMC::handle_MessadeId(char const * token)
+GxRMC::ParserState GxRMC::handle_MessadeId(char const * token, RmcSource & source)
 {
-  if(isGPRMC(token))
-    return ParserState::UTCPositionFix;
-  else
-    return ParserState::Error;
+  if (util::rmc_isGPRMC(token))
+    source = RmcSource::GPS;
+  else if (util::rmc_isGLRMC(token))
+    source = RmcSource::GLONASS;
+  else if (util::rmc_isGARMC(token))
+    source = RmcSource::Galileo;
+  else if (util::rmc_isGNRMC(token))
+    source = RmcSource::GNSS;
+
+  return ParserState::UTCPositionFix;
 }
 
-GPRMC::ParserState GPRMC::handle_UTCPositionFix(char const * token, Time & time_utc)
+GxRMC::ParserState GxRMC::handle_UTCPositionFix(char const * token, Time & time_utc)
 {
   if (strlen(token))
-    util::gprmc_parseTime(token, time_utc);
+    util::parseTime(token, time_utc);
   else
-  {
-    time_utc.hour = -1;
-    time_utc.minute = -1;
-    time_utc.second = -1;
-    time_utc.microsecond = -1;
-  }
+    time_utc = INVALID_TIME;
 
   return ParserState::Status;
 }
 
-GPRMC::ParserState GPRMC::handle_Status(char const * token, bool & is_valid)
+GxRMC::ParserState GxRMC::handle_Status(char const * token, bool & is_valid)
 {
-  is_valid = false;
-
-  if (strlen(token) == 0)
-    return ParserState::Error;
-
-  if(!strncmp(token, "A", 1)) {
+  if(strlen(token) > 0 && !strncmp(token, "A", 1))
     is_valid = true;
-    return ParserState::LatitudeVal;
-  }
+  else
+    is_valid = false;
 
-  if(!strncmp(token, "V", 1))
-    return ParserState::Done;
-
-  return ParserState::Error;
+  return ParserState::LatitudeVal;
 }
 
-GPRMC::ParserState GPRMC::handle_LatitudeVal(char const * token, float & latitude)
+GxRMC::ParserState GxRMC::handle_LatitudeVal(char const * token, float & latitude)
 {
   if (strlen(token))
-    latitude = util::gprmc_parseLatitude(token);
+    latitude = util::parseLatitude(token);
   else
     latitude = NAN;
 
   return ParserState::LatitudeNS;
 }
 
-GPRMC::ParserState GPRMC::handle_LatitudeNS(char const * token, float & latitude)
+GxRMC::ParserState GxRMC::handle_LatitudeNS(char const * token, float & latitude)
 {
-  if (strlen(token))
-  {
-    if(!strncmp(token, "N", 1))
-      return ParserState::LongitudeVal;
+  if (strlen(token) > 0  && !strncmp(token, "S", 1))
+    latitude *= (-1.0f);
 
-    if(!strncmp(token, "S", 1)) {
-      latitude *= (-1.0f);
-      return ParserState::LongitudeVal;
-    }
-  }
-
-  return ParserState::Error;
+  return ParserState::LongitudeVal;
 }
 
-GPRMC::ParserState GPRMC::handle_LongitudeVal(char const * token, float & longitude)
+GxRMC::ParserState GxRMC::handle_LongitudeVal(char const * token, float & longitude)
 {
   if (strlen(token))
-    longitude = util::gprmc_parseLongitude(token);
+    longitude = util::parseLongitude(token);
   else
     longitude = NAN;
 
   return ParserState::LongitudeEW;
 }
 
-GPRMC::ParserState GPRMC::handle_LongitudeEW(char const * token, float & longitude)
+GxRMC::ParserState GxRMC::handle_LongitudeEW(char const * token, float & longitude)
 {
-  if (strlen(token))
-  {
-    if(!strncmp(token, "E", 1))
-      return ParserState::SpeedOverGround;
+  if (strlen(token) > 0 && !strncmp(token, "W", 1))
+    longitude *= (-1.0f);
 
-    if(!strncmp(token, "W", 1)) {
-      longitude *= (-1.0f);
-      return ParserState::SpeedOverGround;
-    }
-  }
-
-  return ParserState::Error;
+  return ParserState::SpeedOverGround;
 }
 
-GPRMC::ParserState GPRMC::handle_SpeedOverGround(char const * token, float & speed)
+GxRMC::ParserState GxRMC::handle_SpeedOverGround(char const * token, float & speed)
 {
   if (strlen(token))
     speed = kts_to_m_per_s(atof(token));
@@ -189,7 +157,7 @@ GPRMC::ParserState GPRMC::handle_SpeedOverGround(char const * token, float & spe
   return ParserState::TrackAngle;
 }
 
-GPRMC::ParserState GPRMC::handle_TrackAngle(char const * token, float & course)
+GxRMC::ParserState GxRMC::handle_TrackAngle(char const * token, float & course)
 {
   if (strlen(token))
     course = atof(token);
@@ -199,21 +167,17 @@ GPRMC::ParserState GPRMC::handle_TrackAngle(char const * token, float & course)
   return ParserState::Date;
 }
 
-GPRMC::ParserState GPRMC::handle_Date(char const * token, Date & date)
+GxRMC::ParserState GxRMC::handle_Date(char const * token, Date & date)
 {
   if (strlen(token))
-    util::gprmc_parseDate(token, date);
+    util::rmc_parseDate(token, date);
   else
-  {
-    date.day = -1;
-    date.month = -1;
-    date.year = -1;
-  }
+    date = INVALID_DATE;
 
   return ParserState::MagneticVariation;
 }
 
-GPRMC::ParserState GPRMC::handle_MagneticVariation(char const * token, float & magnetic_variation)
+GxRMC::ParserState GxRMC::handle_MagneticVariation(char const * token, float & magnetic_variation)
 {
   if (strlen(token) > 0)
     magnetic_variation = atof(token);
@@ -223,7 +187,7 @@ GPRMC::ParserState GPRMC::handle_MagneticVariation(char const * token, float & m
   return ParserState::MagneticVariationEastWest;
 }
 
-GPRMC::ParserState GPRMC::handle_MagneticVariationEastWest(char const * token, float & magnetic_variation)
+GxRMC::ParserState GxRMC::handle_MagneticVariationEastWest(char const * token, float & magnetic_variation)
 {
   if(!strncmp(token, "W", 1))
     magnetic_variation *= (-1.0f);
@@ -231,7 +195,7 @@ GPRMC::ParserState GPRMC::handle_MagneticVariationEastWest(char const * token, f
   return ParserState::Checksum;
 }
 
-GPRMC::ParserState GPRMC::handle_Checksum(char const * /* token */)
+GxRMC::ParserState GxRMC::handle_Checksum(char const * /* token */)
 {
   return ParserState::Done;
 }

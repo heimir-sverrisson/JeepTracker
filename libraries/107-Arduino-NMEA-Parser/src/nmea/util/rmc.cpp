@@ -9,7 +9,7 @@
  * INCLUDES
  **************************************************************************************/
 
-#include "gprmc.h"
+#include "rmc.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -28,44 +28,32 @@ namespace util
  * FUNCTION DEFINITION
  **************************************************************************************/
 
-void gprmc_parseTime(char const * token, Time & time_utc)
+bool rmc_isGPRMC(char const * nmea)
 {
-  char const hour_str       [] = {token[0], token[1], '\0'};
-  char const minute_str     [] = {token[2], token[3], '\0'};
-  char const second_str     [] = {token[4], token[5], '\0'};
-  char const microsecond_str[] = {token[7], token[8], token[9],'\0'};
-
-  time_utc.hour        = atoi(hour_str);
-  time_utc.minute      = atoi(minute_str);
-  time_utc.second      = atoi(second_str);
-  time_utc.microsecond = atoi(microsecond_str);
+  return (strncmp(nmea, "$GPRMC", 6) == 0);
 }
 
-float gprmc_parseLatitude(char const * token)
+bool rmc_isGLRMC(char const * nmea)
 {
-  char const deg_str[] = {token[0], token[1], '\0'};
-  char min_str[10] = {0};
-  strncpy(min_str, token + 2, sizeof(min_str));
-
-  float latitude  = atoi(deg_str);
-        latitude += atof(min_str) / 60.0f;
-
-  return latitude;
+  return (strncmp(nmea, "$GLRMC", 6) == 0);
 }
 
-float gprmc_parseLongitude(char const * token)
+bool rmc_isGARMC(char const * nmea)
 {
-  char const deg_str[] = {token[0], token[1], token[2], '\0'};
-  char min_str[10] = {0};
-  strncpy(min_str, token + 3, sizeof(min_str));
-
-  float longitude  = atoi(deg_str);
-        longitude += atof(min_str) / 60.0f;
-
-  return longitude;
+  return (strncmp(nmea, "$GARMC", 6) == 0);
 }
 
-void gprmc_parseDate(char const * token, Date & date)
+bool rmc_isGNRMC(char const * nmea)
+{
+  return (strncmp(nmea, "$GNRMC", 6) == 0);
+}
+
+bool rmc_isGxRMC(char const * nmea)
+{
+  return (rmc_isGPRMC(nmea) || rmc_isGLRMC(nmea) || rmc_isGARMC(nmea) || rmc_isGNRMC(nmea));
+}
+
+void rmc_parseDate(char const * token, Date & date)
 {
   char const day_str  [] = {token[0], token[1], '\0'};
   char const month_str[] = {token[2], token[3], '\0'};
